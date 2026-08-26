@@ -96,7 +96,7 @@ for key,flow in flows.items():
 
     flow['duration'] = (end-start).total_seconds()
 
-    flow['average_size'] = (flow['total_packet_size']/flow['packet_count'])
+    flow['average_packet_size'] = (flow['total_packet_size']/flow['packet_count'])
 
     if ( flow['duration'] > 0):
         flow['packets_per_second'] = (flow['packet_count']/flow['duration'])
