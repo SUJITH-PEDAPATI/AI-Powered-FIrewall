@@ -1,10 +1,13 @@
-import scapy
 from scapy.all import TCP,sniff,UDP,ICMP,IP
 from datetime import datetime
-
+import os
+import json
 class PacketCapture:
-    @staticmethod
-    def process_packet(self,packet):
+    def __init__(self):
+        self.FILE_PATH = "logs/security.jsonl"
+        os.makedirs("logs",exist_ok=True)
+    
+    def process_packet(self, packet):
         if IP not in packet:
             return
         timeStamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")
@@ -31,16 +34,30 @@ class PacketCapture:
         elif ICMP in packet:
             protocol = "ICMP"
 
-        print(
-            f"""
-                {timeStamp} | 
-                {source_ip}:{source_port} -> {destination_ip}:{destination_port}
-                Protocal => {protocol}
-                Flags => {flags}
-                Size => {packet_size}
-            """
-        )
-print("Starting the packet Capture .....")
-packet_capture = PacketCapture()
-sniff(prn = packet_capture.process_packet, store = False)
+        packet_data = {
+            "timestamp" : timeStamp,
+            "source_ip" : source_ip,
+            "destination_ip": destination_ip,
+            "source_port": source_port,
+            "destination_port": destination_port,
+            "protocol": protocol,
+            "packet_size": packet_size,
+            "flags": flags
+        }
+
+        
+        with open(self.FILE_PATH,'a',encoding="utf-8") as file:
+            file.write(json.dumps(packet_data) + "\n")
+        
+
+if __name__ == "__main__":
+    print("Starting the packet Capture .....")
+    packet_capture = PacketCapture()
+    sniff(
+        iface="Wi-Fi", ## Specify the interface to capture packets from
+        prn=packet_capture.process_packet, 
+        store=False,
+        timeout=10
+    )
+    print("Packet Capturing Completed")
 
