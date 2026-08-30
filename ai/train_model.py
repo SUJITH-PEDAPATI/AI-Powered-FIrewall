@@ -1,7 +1,11 @@
 import pandas as pd
 from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import classification_report,confusion_matrix,accuracy_score
+import joblib
 
 DATASET = "data/network_flows.csv"
+MODEL_PATH = "ai/firewall_model.pkl"
 
 df = pd.read_csv(DATASET)
 features = [
@@ -19,18 +23,26 @@ features = [
     "rst_count",
     "psh_count"
 ]
-
+df = df.dropna(subset = features + ["label"])
 X = df[features]
 y = df["label"]
 
 X_train,x_test,y_train,y_test = train_test_split(X,y,test_size = 0.3,random_state = 42)
 
-print("Dataset: ",len(df))
-print("Training Samples: ",len(X_train))
-print("Testing Samples: ",len(x_test))
+model = RandomForestClassifier(
+    n_estimators=100,
+    random_state=42,
+    class_weight="balanced"
+)
 
-print("\n Training Labels:")
-print(y_train.value_counts())
+model.fit(X_train,y_train)
+y_pred = model.predict(x_test)
+print("Accuracy:",accuracy_score(y_test,y_pred))
+print("\n Classification Report:")
+print(classification_report(y_test,y_pred))
 
-print("\n Testing Labels: ")
-print(y_test.value_counts())
+print("\n Confusion Matrix")
+print(confusion_matrix(y_test,y_pred))
+
+joblib.dump(model,MODEL_PATH)
+print(f"Model Saved to : {MODEL_PATH}")

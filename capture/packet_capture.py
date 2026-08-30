@@ -2,6 +2,8 @@ from scapy.all import TCP,sniff,UDP,ICMP,IP
 from datetime import datetime
 import os
 import json
+
+CAPTURE_TIME = 60
 class PacketCapture:
     def __init__(self):
         self.FILE_PATH = "logs/security.jsonl"
@@ -23,11 +25,13 @@ class PacketCapture:
         flags = None
 
         if TCP in packet:
+            protocol = 6
             source_port = packet[TCP].sport
             destination_port = packet[TCP].dport
             flags = str(packet[TCP].flags)
 
         elif UDP in packet:
+            protocol = 17
             source_port = packet[UDP].sport
             destination_port = packet[UDP].dport
 
@@ -57,7 +61,7 @@ if __name__ == "__main__":
         iface="Wi-Fi", ## Specify the interface to capture packets from
         prn=packet_capture.process_packet, 
         store=False,
-        timeout=10
+        timeout=CAPTURE_TIME
     )
     print("Packet Capturing Completed")
 
