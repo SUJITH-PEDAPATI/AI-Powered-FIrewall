@@ -1,11 +1,14 @@
 import pandas as pd
 from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import classification_report,confusion_matrix,accuracy_score
+from sklearn.metrics import classification_report, confusion_matrix, accuracy_score
 import joblib
 
 DATASET = "data/network_flows.csv"
 MODEL_PATH = "ai/firewall_model.pkl"
+
+# Labels in the dataset that mean "benign / normal" (covers the 'BENGIN' typo)
+BENIGN_LABELS = {"benign", "normal", "bengin", "begnin", "bgein"}
 
 df = pd.read_csv(DATASET)
 features = [
@@ -23,11 +26,22 @@ features = [
     "rst_count",
     "psh_count"
 ]
-df = df.dropna(subset = features + ["label"])
-X = df[features]
-y = df["label"]
+df = df.dropna(subset=features + ["label"])
 
-X_train,x_test,y_train,y_test = train_test_split(X,y,test_size = 0.3,random_state = 42)
+# Binarise labels: 0 = benign, 1 = attack
+# This ensures model.predict() always returns an integer (0 or 1) and
+# avoids the internal ValueError that occurs when sklearn tries to
+# cast string labels like 'BENGIN' to int.
+df["label_bin"] = df["label"].apply(
+    lambda lbl: 0 if str(lbl).strip().lower() in BENIGN_LABELS else 1
+)
+print("Label distribution after binarisation:")
+print(df["label_bin"].value_counts())
+
+X = df[features]
+y = df["label_bin"]
+
+X_train, x_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42)
 
 model = RandomForestClassifier(
     n_estimators=100,
@@ -35,14 +49,14 @@ model = RandomForestClassifier(
     class_weight="balanced"
 )
 
-model.fit(X_train,y_train)
+model.fit(X_train, y_train)
 y_pred = model.predict(x_test)
-print("Accuracy:",accuracy_score(y_test,y_pred))
+print("Accuracy:", accuracy_score(y_test, y_pred))
 print("\n Classification Report:")
-print(classification_report(y_test,y_pred))
+print(classification_report(y_test, y_pred))
 
 print("\n Confusion Matrix")
-print(confusion_matrix(y_test,y_pred))
+print(confusion_matrix(y_test, y_pred))
 
-joblib.dump(model,MODEL_PATH)
-print(f"Model Saved to : {MODEL_PATH}")
+joblib.dump(model, MODEL_PATH)
+print(f"Model Saved to : {MODEL_PATH}")

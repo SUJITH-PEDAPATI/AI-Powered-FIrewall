@@ -6,10 +6,15 @@ from scapy.all import TCP,UDP,sniff,ICMP,IP
 from datetime import datetime
 from collections import defaultdict
 import time
+from risk_engine import RiskEngine
+from decision_engine import DecisionEngine
+from firewall.windows_firewall import WindowsFirewall
+
 
 MODEL_PATH = "ai/firewall_model.pkl"
 INTERFACE = "Wi-Fi"
 FLOW_TIMEOUT = 60
+DETECTION_WINDOW = 5
 
 features = [
     "duration",
@@ -29,12 +34,16 @@ features = [
 
 model = joblib.load(MODEL_PATH)
 flows = {}
+riskEngine = RiskEngine()
+decisionEngine = DecisionEngine()
+windowsfirewall = WindowsFirewall()
 source_activity = defaultdict(
     lambda: {
-        "first_seen": time.time(),
+        "window_start": time.time(),
         "last_seen": time.time(),
         "syn_count": 0,
-        "parts": set(),
+        "rst_count": 0,
+        "ports": set(),
         "packet_count": 0
     }
 )
@@ -57,7 +66,7 @@ class LiveDetector:
         elif UDP in packet:
             protocol = "UDP"
             source_port = packet[UDP].sport
-            destination_port = packet[UDP].sport
+            destination_port = packet[UDP].dport
 
         elif ICMP in packet:
             protocol = "ICMP"
@@ -81,7 +90,7 @@ class LiveDetector:
         return {
             "start_time": now,
             "last_time": now,
-            "packet_time": 1,
+            "packet_count": 1,
             "total_bytes": size,
             "min_packet_size": size,
             "max_packet_size": size,
@@ -144,32 +153,76 @@ class LiveDetector:
             "psh_count": flow["psh_count"]
         }
 
-    def predict_flow(self,flow_key,flow):
+    def predict_flow(self, flow_key, flow):
         data = self.calculate_features(flow)
         dataFrame = pandas.DataFrame(
-            [[data[features] for feature in features]],
+            [[data[feature] for feature in features]],
             columns=features
         )
-        prediction  = model.predict(dataFrame)[0]
-    def process_packet(self,packet):
+        prediction = model.predict(dataFrame)[0]
+        source_ip = flow_key[0]
+        behavioral_risk = self.get_behavioral_risk(
+            source_ip
+        )
+        decision = decisionEngine.decide(
+            prediction,
+            behavioral_risk
+        )
+        
+        print("\n" + "=" * 60)
+        print("AI FIREWALL DECISION")
+        print("=" * 60)
+
+        print("Source IP        :", source_ip)
+        print("AI Prediction    :", prediction)
+        print("Behavior Risk    :", behavioral_risk)
+        print("FINAL DECISION   :", decision)
+        if decision == "BLOCK":
+            windowsfirewall.block_ip(source_ip)
+        print("=" * 60)
+
+    def process_packet(self, packet):
         flow_key = self.get_flow_key(packet)
-        if flow_key is None: return
+        if flow_key is None:
+            return
 
         if flow_key not in flows:
             flows[flow_key] = self.create_flow(packet)
-
         else:
-            self.update_flow(flows[flow_key],packet)
-
+            self.update_flow(
+                flows[flow_key],
+                packet
+            )
         flow = flows[flow_key]
-
+        current_time = datetime.now()
         duration = (
-            flow["last_time"]-flow["start_time"]
+            current_time - flow["start_time"]
         ).total_seconds()
 
         if duration >= FLOW_TIMEOUT:
-            self.predict_flow(flow_key,flow)
+            self.predict_flow(
+                flow_key,
+                flow
+            )
             del flows[flow_key]
+        self.track_source_activity(packet)
+
+    def get_behavioral_risk(self, source_ip):
+
+        activity = source_activity[source_ip]
+        unique_ports = len(activity["ports"])
+        syn_count = activity["syn_count"]
+        rst_count = activity["rst_count"]
+        packets_per_second = (
+            activity["packet_count"] / DETECTION_WINDOW
+        )
+        risk = riskEngine.calculate_risk(
+            syn_count,
+            unique_ports,
+            packets_per_second,
+            rst_count
+        )
+        return risk
     def track_source_activity(self,packet):
         if IP not in packet : return
         source_ip = packet[IP].src
@@ -177,7 +230,18 @@ class LiveDetector:
 
         activity["last_seen"] = time.time()
         activity["packet_count"] += 1
+        current_time = time.time()
+        if current_time - activity["window_start"] >= DETECTION_WINDOW:
+            self.detect_port_scan(source_ip)
 
+            # Start a new window
+            activity["window_start"] = current_time
+            activity["syn_count"] = 0
+            activity["rst_count"] = 0
+            activity["ports"].clear()
+            activity["packet_count"] = 0
+
+        activity["packet_count"] += 1
         if TCP in packet:
             destination_port = packet[TCP].dport
             activity["ports"].add(destination_port)
@@ -186,6 +250,43 @@ class LiveDetector:
 
             if "S" in flags:
                 activity["syn_count"] += 1
+            if "R" in flags:
+                activity["rst_count"] += 1
+
+    def detect_port_scan(self,source_ip):
+        activity = source_activity[source_ip]
+        duration = (activity["last_seen"]-activity["first_seen"])
+        if duration <= 0:
+            duration = 1
+
+        unique_ports = len(activity["ports"])
+        syn_count = activity["syn_count"]
+        packets_per_second = activity["packet_count"]/duration
+
+        rst_count = activity["rst_count"]
+        risk = riskEngine.calculate_risk(
+            syn_count,
+            unique_ports,
+            packets_per_second,
+            rst_count
+        )
+
+        print("Source IP       :", source_ip)
+        print("SYN packets     :", syn_count)
+        print("Unique ports    :", unique_ports)
+        print("Packets/sec     :", packets_per_second)
+        print("Risk Score      :", risk)
+
+        if risk >= 0.8:
+            print("Possible Port Scan")
+
+        elif risk >= 0.5:
+            print("SUSPICIOUS")
+
+        else:
+            print("✓ NORMAL")
+
+        print("=" * 60)
 
 
 sniff(
